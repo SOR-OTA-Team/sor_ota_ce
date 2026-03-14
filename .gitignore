@@ -1,0 +1,4 @@
+target/
+ota-ce-gen/
+*.class
+*.log
