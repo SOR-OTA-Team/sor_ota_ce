@@ -96,24 +96,53 @@ sudo nano /etc/hosts
 
 아래 내용 추가:
 ```
-0.0.0.0    reposerver.ota.ce
-0.0.0.0    keyserver.ota.ce
-0.0.0.0    director.ota.ce
-0.0.0.0    treehub.ota.ce
-0.0.0.0    deviceregistry.ota.ce
-0.0.0.0    campaigner.ota.ce
-0.0.0.0    app.ota.ce
-0.0.0.0    ota.ce
+127.0.0.1    reposerver.ota.ce
+127.0.0.1    keyserver.ota.ce
+127.0.0.1    director.ota.ce
+127.0.0.1    treehub.ota.ce
+127.0.0.1    deviceregistry.ota.ce
+127.0.0.1    campaigner.ota.ce
+127.0.0.1    app.ota.ce
+127.0.0.1    ota.ce
 ```
 
+> `0.0.0.0` 대신 `127.0.0.1`을 사용합니다. 둘 다 동작하지만 `127.0.0.1`이 로컬 루프백 주소를 명시하여 더 안전하고 명확합니다.
+
 **Windows**  
-`C:\Windows\System32\drivers\etc\hosts` 파일을 **메모장(관리자 권한)** 으로 열고 위 내용 추가
+`C:\Windows\System32\drivers\etc\hosts` 파일을 **메모장(관리자 권한)** 으로 열고 아래 내용 추가
+
+```
+127.0.0.1    reposerver.ota.ce
+127.0.0.1    keyserver.ota.ce
+127.0.0.1    director.ota.ce
+127.0.0.1    treehub.ota.ce
+127.0.0.1    deviceregistry.ota.ce
+127.0.0.1    campaigner.ota.ce
+127.0.0.1    app.ota.ce
+127.0.0.1    ota.ce
+```
 
 ### 3. 서버 인증서 생성
 
+**Mac / Linux**
 ```bash
 bash scripts/gen-server-certs.sh
 ```
+
+**Windows (Git Bash)**
+
+Windows에서는 스크립트 실행 전 줄바꿈 문자 변환이 필요합니다.
+```bash
+dos2unix scripts/gen-server-certs.sh
+bash scripts/gen-server-certs.sh
+```
+
+> Windows는 줄바꿈 문자가 `\r\n`(CRLF)이라 bash 스크립트 실행 시 아래와 같은 오류가 발생합니다.
+> ```
+> gen-server-certs.sh: line 2: $'\r': command not found
+> : invalid option nameline 3: set: pipefail
+> ```
+> `dos2unix`로 `\n`(LF)으로 변환 후 실행하면 해결됩니다.
 
 ---
 
@@ -211,3 +240,17 @@ A. 3306, 80, 9092, 2181 포트가 이미 사용 중인지 확인하세요.
 ```powershell
 netstat -ano | findstr :3306
 ```
+
+**Q. Windows에서 `$'\r': command not found` 에러가 납니다.**  
+A. Windows의 줄바꿈 문자(`\r\n`) 때문입니다. `dos2unix`로 변환 후 실행하세요.
+```bash
+dos2unix scripts/gen-server-certs.sh
+dos2unix scripts/gen-device.sh
+bash scripts/gen-server-certs.sh
+```
+
+**Q. `gateway` 컨테이너가 재시작을 반복합니다.**  
+A. 대부분 `/etc/hosts` 설정이 누락되어 있거나 인증서가 없는 경우입니다. 최초 1회 설정의 2~3번 단계를 완료했는지 확인하세요.
+
+**Q. `Could not resolve host: director.ota.ce` 에러가 납니다.**  
+A. `/etc/hosts` 설정이 적용되지 않은 것입니다. 터미널을 재시작하거나 2번 단계를 다시 수행하세요.
