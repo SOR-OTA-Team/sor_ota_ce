@@ -54,16 +54,17 @@ reverse-proxy:80 → ota-lith (관리 API)
 
 ### 포트 정리
 
-| 컨테이너 | 포트 | 용도 | 보안 |
-|---|---|---|---|
-| gateway | 30443 | HTTPS (mTLS) — 차량 전용 | ✅ mTLS |
-| reverse-proxy | 80 | HTTP — 관리자/개발자 | ⚠️ 인증 없음 |
-| reverse-proxy | 8080 | Traefik 대시보드 | ⚠️ 인증 없음 |
-| db | 3306 | MariaDB | ⚠️ 비밀번호만 |
-| kafka | 9092 | Kafka 브로커 | ❌ 인증 없음 |
-| zookeeper | 2181 | Kafka 코디네이터 | ❌ 인증 없음 |
+| 컨테이너      | 포트  | 용도                     | 보안          |
+| ------------- | ----- | ------------------------ | ------------- |
+| gateway       | 30443 | HTTPS (mTLS) — 차량 전용 | ✅ mTLS       |
+| reverse-proxy | 80    | HTTP — 관리자/개발자     | ⚠️ 인증 없음  |
+| reverse-proxy | 8080  | Traefik 대시보드         | ⚠️ 인증 없음  |
+| db            | 3306  | MariaDB                  | ⚠️ 비밀번호만 |
+| kafka         | 9092  | Kafka 브로커             | ❌ 인증 없음  |
+| zookeeper     | 2181  | Kafka 코디네이터         | ❌ 인증 없음  |
 
 > **주의:** 아래 포트들은 현재 보안 설정이 없으므로 운영 환경에서는 방화벽으로 차단하거나 인증을 추가해야 합니다.
+>
 > - DB(3306): 비밀번호만 알면 접근 가능
 > - Kafka(9092): 인증 없이 메시지 조작 가능
 > - Zookeeper(2181): Kafka 클러스터 설정 변경 가능
@@ -78,6 +79,23 @@ reverse-proxy:80 → ota-lith (관리 API)
 
 ---
 
+## 간단 사용법(재실행시)
+
+**1. 서버 인증서 생성 (최초 1회)**
+bash scripts/gen-server-certs.sh
+
+**2. DB 먼저 기동 (10~20초 대기)**
+docker-compose -f ota-ce.yaml up db -d
+
+**3. 전체 서비스 기동**
+docker-compose -f ota-ce.yaml up -d
+
+**4. 상태 확인**
+docker-compose -f ota-ce.yaml ps
+
+**5. 동작 확인**
+curl director.ota.ce/health/version
+
 ## 최초 1회 설정
 
 ### 1. 저장소 클론
@@ -90,11 +108,13 @@ cd sor_ota
 ### 2. /etc/hosts 설정
 
 **Mac / Linux**
+
 ```bash
 sudo nano /etc/hosts
 ```
 
 아래 내용 추가:
+
 ```
 127.0.0.1    reposerver.ota.ce
 127.0.0.1    keyserver.ota.ce
@@ -125,6 +145,7 @@ sudo nano /etc/hosts
 ### 3. 서버 인증서 생성
 
 **Mac / Linux**
+
 ```bash
 bash scripts/gen-server-certs.sh
 ```
@@ -132,16 +153,19 @@ bash scripts/gen-server-certs.sh
 **Windows (Git Bash)**
 
 Windows에서는 스크립트 실행 전 줄바꿈 문자 변환이 필요합니다.
+
 ```bash
 dos2unix scripts/gen-server-certs.sh
 bash scripts/gen-server-certs.sh
 ```
 
 > Windows는 줄바꿈 문자가 `\r\n`(CRLF)이라 bash 스크립트 실행 시 아래와 같은 오류가 발생합니다.
+>
 > ```
 > gen-server-certs.sh: line 2: $'\r': command not found
 > : invalid option nameline 3: set: pipefail
 > ```
+>
 > `dos2unix`로 `\n`(LF)으로 변환 후 실행하면 해결됩니다.
 
 ---
@@ -170,13 +194,13 @@ curl director.ota.ce/health/version
 
 ## 접속 주소
 
-| 용도 | 주소 |
-|---|---|
-| Director | http://director.ota.ce |
-| Device Registry | http://deviceregistry.ota.ce |
-| Repo Server | http://reposerver.ota.ce |
-| Treehub | http://treehub.ota.ce |
-| Traefik 대시보드 | http://localhost:8080 |
+| 용도             | 주소                         |
+| ---------------- | ---------------------------- |
+| Director         | http://director.ota.ce       |
+| Device Registry  | http://deviceregistry.ota.ce |
+| Repo Server      | http://reposerver.ota.ce     |
+| Treehub          | http://treehub.ota.ce        |
+| Traefik 대시보드 | http://localhost:8080        |
 
 ---
 
@@ -192,6 +216,7 @@ bash scripts/get-credentials.sh
 ```
 
 업데이트 배포 방법:
+
 - API 사용 → [`docs/api-updates.md`](docs/api-updates.md)
 - ota-cli 사용 → [`docs/updates-ota-cli.md`](docs/updates-ota-cli.md)
 
@@ -213,14 +238,14 @@ docker-compose -f ota-ce.yaml down -v
 
 모든 이미지는 `linux/amd64` (Windows, Intel Mac), `linux/arm64` (Apple Silicon) 멀티 플랫폼을 지원합니다.
 
-| 서비스 | 이미지 |
-|---|---|
-| DB | `jusy4901/ota-ce-db:latest` (MariaDB 10.4) |
-| Gateway | `jusy4901/ota-ce-gateway:latest` (Nginx) |
-| Kafka | `jusy4901/ota-ce-kafka:latest` |
-| OTA 서버 | `jusy4901/ota-ce-lith:latest` |
-| Reverse Proxy | `jusy4901/ota-ce-proxy:latest` (Traefik) |
-| Zookeeper | `jusy4901/ota-ce-zookeeper:latest` |
+| 서비스        | 이미지                                     |
+| ------------- | ------------------------------------------ |
+| DB            | `jusy4901/ota-ce-db:latest` (MariaDB 10.4) |
+| Gateway       | `jusy4901/ota-ce-gateway:latest` (Nginx)   |
+| Kafka         | `jusy4901/ota-ce-kafka:latest`             |
+| OTA 서버      | `jusy4901/ota-ce-lith:latest`              |
+| Reverse Proxy | `jusy4901/ota-ce-proxy:latest` (Traefik)   |
+| Zookeeper     | `jusy4901/ota-ce-zookeeper:latest`         |
 
 ---
 
@@ -231,18 +256,21 @@ A. 정상입니다. 재시작 시 이전 DB 연결이 정리되는 과정에서 
 
 **Q. `docker-compose: command not found` 에러가 납니다.**  
 A. 최신 Docker Desktop은 띄어쓰기 버전을 사용합니다.
+
 ```bash
 docker compose -f ota-ce.yaml up -d
 ```
 
 **Q. Windows에서 포트 충돌 에러가 납니다.**  
 A. 3306, 80, 9092, 2181 포트가 이미 사용 중인지 확인하세요.
+
 ```powershell
 netstat -ano | findstr :3306
 ```
 
 **Q. Windows에서 `$'\r': command not found` 에러가 납니다.**  
 A. Windows의 줄바꿈 문자(`\r\n`) 때문입니다. `dos2unix`로 변환 후 실행하세요.
+
 ```bash
 dos2unix scripts/gen-server-certs.sh
 dos2unix scripts/gen-device.sh
