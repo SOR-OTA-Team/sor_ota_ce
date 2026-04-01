@@ -1,119 +1,48 @@
-# SOR OTA Community Edition
+# OTA-CE + Aktualizr 설정 가이드
 
-> Uptane 기반 차량 OTA(Over-The-Air) 업데이트 플랫폼  
-> 원본: [uptane/ota-community-edition](https://github.com/uptane/ota-community-edition)
-
-마이크로서비스 없이 **docker-compose 하나**로 전체 OTA 서버를 로컬에서 실행할 수 있습니다.  
-Mac (Apple Silicon / Intel), Windows 모두 지원합니다.
+Jetson Orin Nano 보드에서 aktualizr를 실행하고, PC(Mac)에서 ota-ce 서버와 OTA 통신하는 전체 설정 가이드입니다.
 
 ---
 
-## 아키텍처 개요
-
-### 트래픽 흐름
+## 전체 아키텍처
 
 ```
-[차량/디바이스]                    [개발자/관리자]
-      │                                  │
-      │ mTLS 필수                        │ 일반 HTTP/HTTPS
-      ▼                                  ▼
-gateway:30443                    reverse-proxy:80
-      │                                  │
-      │ 버전 확인, 메타데이터             │ 이미지 업로드
-      │ 업데이트 다운로드                 │ 디바이스 관리
-      │ 상태 보고                        │ 캠페인 생성
-      ▼                                  ▼
-   ota-lith                          ota-lith
+[PC / Mac]                          [Jetson Orin Nano]
+┌─────────────────────────────┐     ┌─────────────────────────┐
+│  ota-ce (Docker)            │     │  aktualizr (client)     │
+│  ├── director.ota.ce        │◄────►  config.toml            │
+│  ├── reposerver.ota.ce      │mTLS │  └── 인증서 + CA 포함   │
+│  ├── treehub.ota.ce         │     └─────────────────────────┘
+│  ├── deviceregistry.ota.ce  │
+│  └── campaigner.ota.ce      │
+└─────────────────────────────┘
 ```
-
-- **gateway(30443)** — 차량 전용, mTLS 인증으로 허가된 차량만 접근 가능
-- **reverse-proxy(80)** — 관리자/개발자 전용 (추후 관리자 인증 추가 필요)
-
-### 상세 라우팅
-
-```
-[차량]
-    │
-    ▼
-gateway:30443 (mTLS)
-    │
-    ├─ /treehub/    ─────────→ ota-lith:7400  (OSTree 저장소)
-    ├─ /repo/       ─────────→ ota-lith:7100  (TUF 메타데이터)
-    ├─ /campaigner/ ─────────→ ota-lith:7600  (캠페인)
-    ├─ /core/       ─────────→ ota-lith:7500  (코어 서비스)
-    └─ /director/   ─→ reverse-proxy:80 ─→ ota-lith (director)
-
-[개발자]
-    │
-    ▼
-reverse-proxy:80 → ota-lith (관리 API)
-```
-
-> `/director/` 경로만 reverse-proxy를 경유하고, 나머지는 gateway에서 ota-lith로 직접 연결됩니다.  
-> 현재는 포트 번호로 직접 연결되며, 추후 Traefik의 서비스 디스커버리로 서비스 추가/변경 시 gateway 설정을 건드리지 않도록 개선 예정입니다.
-
-### 포트 정리
-
-| 컨테이너      | 포트  | 용도                     | 보안          |
-| ------------- | ----- | ------------------------ | ------------- |
-| gateway       | 30443 | HTTPS (mTLS) — 차량 전용 | ✅ mTLS       |
-| reverse-proxy | 80    | HTTP — 관리자/개발자     | ⚠️ 인증 없음  |
-| reverse-proxy | 8080  | Traefik 대시보드         | ⚠️ 인증 없음  |
-| db            | 3306  | MariaDB                  | ⚠️ 비밀번호만 |
-| kafka         | 9092  | Kafka 브로커             | ❌ 인증 없음  |
-| zookeeper     | 2181  | Kafka 코디네이터         | ❌ 인증 없음  |
-
-> **주의:** 아래 포트들은 현재 보안 설정이 없으므로 운영 환경에서는 방화벽으로 차단하거나 인증을 추가해야 합니다.
->
-> - DB(3306): 비밀번호만 알면 접근 가능
-> - Kafka(9092): 인증 없이 메시지 조작 가능
-> - Zookeeper(2181): Kafka 클러스터 설정 변경 가능
-> - reverse-proxy(80, 8080): mTLS 없는 평문 HTTP
 
 ---
 
 ## 사전 요구사항
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치 및 실행
-- 메모리: Docker Desktop → Settings → Resources → **4GB 이상** 설정
+| 항목 | 버전 |
+|------|------|
+| Docker Desktop | 최신 버전 |
+| Docker Compose | v2 이상 |
+| Git | - |
+| Jetson OS | JetPack 기반 Ubuntu |
 
 ---
 
-## 간단 사용법(재실행시)
+## 1단계: PC에서 ota-ce 서버 셋업
 
-**1. 서버 인증서 생성 (최초 1회)**
-bash scripts/gen-server-certs.sh
-
-**2. DB 먼저 기동 (10~20초 대기)**
-docker-compose -f ota-ce.yaml up db -d
-
-**3. 전체 서비스 기동**
-docker-compose -f ota-ce.yaml up -d
-
-**4. 상태 확인**
-docker-compose -f ota-ce.yaml ps
-
-**5. 동작 확인**
-curl director.ota.ce/health/version
-
-## 최초 1회 설정
-
-### 1. 저장소 클론
+### 1-1. 저장소 클론
 
 ```bash
-git clone https://github.com/seongyongju/sor_ota.git
-cd sor_ota
+git clone https://github.com/SOR-OTA-Team/sor_ota_ce.git
+cd sor_ota_ce
 ```
 
-### 2. /etc/hosts 설정
+### 1-2. `/etc/hosts` 설정
 
-**Mac / Linux**
-
-```bash
-sudo nano /etc/hosts
-```
-
-아래 내용 추가:
+`/etc/hosts` 파일에 다음을 추가합니다 (sudo 필요):
 
 ```
 127.0.0.1    reposerver.ota.ce
@@ -126,159 +55,182 @@ sudo nano /etc/hosts
 127.0.0.1    ota.ce
 ```
 
-> `0.0.0.0` 대신 `127.0.0.1`을 사용합니다. 둘 다 동작하지만 `127.0.0.1`이 로컬 루프백 주소를 명시하여 더 안전하고 명확합니다.
-
-**Windows**  
-`C:\Windows\System32\drivers\etc\hosts` 파일을 **메모장(관리자 권한)** 으로 열고 아래 내용 추가
-
-```
-127.0.0.1    reposerver.ota.ce
-127.0.0.1    keyserver.ota.ce
-127.0.0.1    director.ota.ce
-127.0.0.1    treehub.ota.ce
-127.0.0.1    deviceregistry.ota.ce
-127.0.0.1    campaigner.ota.ce
-127.0.0.1    app.ota.ce
-127.0.0.1    ota.ce
-```
-
-### 3. 서버 인증서 생성
-
-**Mac / Linux**
+### 1-3. 서버 인증서 생성
 
 ```bash
 bash scripts/gen-server-certs.sh
 ```
 
-**Windows (Git Bash)**
-
-Windows에서는 스크립트 실행 전 줄바꿈 문자 변환이 필요합니다.
+### 1-4. 서버 시작
 
 ```bash
-dos2unix scripts/gen-server-certs.sh
-bash scripts/gen-server-certs.sh
-```
-
-> Windows는 줄바꿈 문자가 `\r\n`(CRLF)이라 bash 스크립트 실행 시 아래와 같은 오류가 발생합니다.
->
-> ```
-> gen-server-certs.sh: line 2: $'\r': command not found
-> : invalid option nameline 3: set: pipefail
-> ```
->
-> `dos2unix`로 `\n`(LF)으로 변환 후 실행하면 해결됩니다.
-
----
-
-## 실행
-
-```bash
-# DB 먼저 기동 (10~20초 대기)
+# DB 먼저 초기화 (20초 대기 권장)
 docker-compose -f ota-ce.yaml up db -d
+sleep 20
 
-# 전체 서비스 기동
+# 전체 서비스 시작
 docker-compose -f ota-ce.yaml up -d
 
-# 상태 확인
-docker-compose -f ota-ce.yaml ps
-```
-
-모든 서비스가 `Up` 상태이면 정상입니다.
-
-```bash
 # 동작 확인
 curl director.ota.ce/health/version
 ```
 
+### 주요 서비스 포트
+
+| 서비스 | URL | 용도 |
+|--------|-----|------|
+| Director | `http://director.ota.ce` | 업데이트 지시 |
+| Repo Server | `http://reposerver.ota.ce` | TUF 메타데이터 |
+| Treehub | `http://treehub.ota.ce` | OSTree 저장소 |
+| Device Registry | `http://deviceregistry.ota.ce` | 디바이스 관리 |
+| Campaigner | `http://campaigner.ota.ce` | 캠페인 관리 |
+| Gateway (mTLS) | `https://ota.ce:30443` | 차량 통신 |
+| Traefik Dashboard | `http://localhost:8080` | 관리 UI |
+
 ---
 
-## 접속 주소
-
-| 용도             | 주소                         |
-| ---------------- | ---------------------------- |
-| Director         | http://director.ota.ce       |
-| Device Registry  | http://deviceregistry.ota.ce |
-| Repo Server      | http://reposerver.ota.ce     |
-| Treehub          | http://treehub.ota.ce        |
-| Traefik 대시보드 | http://localhost:8080        |
-
----
-
-## 디바이스 등록 및 업데이트 배포
+## 2단계: 디바이스 인증서 생성 (PC에서)
 
 ```bash
-# 새 디바이스 인증서 생성
 bash scripts/gen-device.sh
-# → ota-ce-gen/devices/<uuid>/ 에 설정 파일 생성됨
-
-# credentials.zip 생성 (API/CLI 사용 시 필요)
 bash scripts/get-credentials.sh
 ```
 
-업데이트 배포 방법:
-
-- API 사용 → [`docs/api-updates.md`](docs/api-updates.md)
-- ota-cli 사용 → [`docs/updates-ota-cli.md`](docs/updates-ota-cli.md)
+생성되는 파일:
+- `ota-ce-gen/devices/<uuid>/config.toml` — aktualizr 설정 파일
+- `ota-ce-gen/devices/<uuid>/` — 인증서 및 키 파일
+- `credentials.zip` — OTA CLI 사용 시 필요
 
 ---
 
-## 종료
+## 3단계: 모니터 없이 Jetson 연결 (헤드리스)
+
+Jetson Orin Nano를 모니터 없이 Mac에서 접속하는 방법입니다.
+
+### 방법 1: USB 시리얼 콘솔 (초기 부팅 확인용, 가장 확실)
 
 ```bash
-# 컨테이너 종료 (데이터 유지)
+# Mac에서 장치 확인
+ls /dev/tty.usbmodem*   # 또는 tty.usbserial*
+
+# 시리얼 접속 (115200 baud)
+screen /dev/tty.usbmodem* 115200
+```
+
+> Jetson 보드의 USB-C 디버그 포트에 연결
+
+### 방법 2: SSH (네트워크 연결 후)
+
+```bash
+ssh <username>@<jetson-ip>
+```
+
+> Jetson IP는 라우터 관리 페이지 또는 `arp -a` 명령으로 확인
+
+### 방법 3: 이더넷 직접 연결 (Mac ↔ Jetson)
+
+1. Mac **시스템 환경설정 → 공유 → 인터넷 공유** 활성화
+2. 이더넷 케이블로 Mac과 Jetson 직접 연결
+3. `arp -a`로 Jetson IP 확인 후 SSH 접속
+
+### 방법 4: USB 가상 이더넷
+
+일부 Jetson 보드는 USB-C 연결 시 가상 네트워크(`usb0`)로 인식됩니다:
+
+```bash
+ssh <username>@192.168.55.1
+```
+
+---
+
+## 4단계: Jetson에 aktualizr 설치
+
+### 4-1. 의존성 설치
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y \
+  cmake libcurl4-openssl-dev libssl-dev \
+  libboost-all-dev libarchive-dev libsodium-dev \
+  git build-essential
+```
+
+### 4-2. sor_aktualizr 빌드
+
+```bash
+git clone https://github.com/SOR-OTA-Team/sor_aktualizr.git
+cd sor_aktualizr
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+sudo make install
+```
+
+---
+
+## 5단계: 인증서 복사 및 네트워크 설정
+
+### 5-1. PC → Jetson 인증서 전송
+
+PC에서 실행:
+
+```bash
+# <jetson-ip>를 실제 Jetson IP 주소로 변경
+scp -r ota-ce-gen/devices/<uuid>/ <username>@<jetson-ip>:~/ota-config/
+```
+
+### 5-2. Jetson `/etc/hosts` 설정
+
+Jetson에서 PC의 IP 주소로 도메인 매핑:
+
+```bash
+# <PC_IP>를 PC의 실제 IP 주소로 변경
+echo "<PC_IP>    ota.ce director.ota.ce reposerver.ota.ce treehub.ota.ce deviceregistry.ota.ce campaigner.ota.ce" | sudo tee -a /etc/hosts
+```
+
+---
+
+## 6단계: aktualizr 실행 및 통신 확인
+
+```bash
+aktualizr -c ~/ota-config/config.toml
+```
+
+정상 동작 시 aktualizr가 director에 접속하여 업데이트를 폴링합니다.
+
+---
+
+## 전체 설정 순서 요약
+
+| 순서 | 위치 | 작업 |
+|------|------|------|
+| 1 | PC | `sor_ota_ce` 클론 + `/etc/hosts` 설정 |
+| 2 | PC | 서버 인증서 생성 (`gen-server-certs.sh`) |
+| 3 | PC | Docker 서버 시작 |
+| 4 | PC | 디바이스 인증서 생성 (`gen-device.sh`) |
+| 5 | Jetson | USB 시리얼 또는 SSH로 접속 |
+| 6 | Jetson | `sor_aktualizr` 빌드 및 설치 |
+| 7 | Jetson | `/etc/hosts`에 PC IP 등록 |
+| 8 | PC → Jetson | `scp`로 인증서/config.toml 복사 |
+| 9 | Jetson | `aktualizr -c config.toml` 실행 |
+
+---
+
+## 서버 중지 방법
+
+```bash
+# 컨테이너 중지 (데이터 유지)
 docker-compose -f ota-ce.yaml down
 
-# 컨테이너 + 데이터 전체 삭제 (초기화)
+# 완전 초기화 (데이터 삭제)
 docker-compose -f ota-ce.yaml down -v
 ```
 
 ---
 
-## 사용 이미지
+## 참고
 
-모든 이미지는 `linux/amd64` (Windows, Intel Mac), `linux/arm64` (Apple Silicon) 멀티 플랫폼을 지원합니다.
-
-| 서비스        | 이미지                                     |
-| ------------- | ------------------------------------------ |
-| DB            | `jusy4901/ota-ce-db:latest` (MariaDB 10.4) |
-| Gateway       | `jusy4901/ota-ce-gateway:latest` (Nginx)   |
-| Kafka         | `jusy4901/ota-ce-kafka:latest`             |
-| OTA 서버      | `jusy4901/ota-ce-lith:latest`              |
-| Reverse Proxy | `jusy4901/ota-ce-proxy:latest` (Traefik)   |
-| Zookeeper     | `jusy4901/ota-ce-zookeeper:latest`         |
-
----
-
-## 자주 묻는 질문
-
-**Q. `Got timeout reading communication packets` 로그가 계속 뜹니다.**  
-A. 정상입니다. 재시작 시 이전 DB 연결이 정리되는 과정에서 나오는 Warning이며 동작에 영향 없습니다.
-
-**Q. `docker-compose: command not found` 에러가 납니다.**  
-A. 최신 Docker Desktop은 띄어쓰기 버전을 사용합니다.
-
-```bash
-docker compose -f ota-ce.yaml up -d
-```
-
-**Q. Windows에서 포트 충돌 에러가 납니다.**  
-A. 3306, 80, 9092, 2181 포트가 이미 사용 중인지 확인하세요.
-
-```powershell
-netstat -ano | findstr :3306
-```
-
-**Q. Windows에서 `$'\r': command not found` 에러가 납니다.**  
-A. Windows의 줄바꿈 문자(`\r\n`) 때문입니다. `dos2unix`로 변환 후 실행하세요.
-
-```bash
-dos2unix scripts/gen-server-certs.sh
-dos2unix scripts/gen-device.sh
-bash scripts/gen-server-certs.sh
-```
-
-**Q. `gateway` 컨테이너가 재시작을 반복합니다.**  
-A. 대부분 `/etc/hosts` 설정이 누락되어 있거나 인증서가 없는 경우입니다. 최초 1회 설정의 2~3번 단계를 완료했는지 확인하세요.
-
-**Q. `Could not resolve host: director.ota.ce` 에러가 납니다.**  
-A. `/etc/hosts` 설정이 적용되지 않은 것입니다. 터미널을 재시작하거나 2번 단계를 다시 수행하세요.
+- [SOR OTA CE Repository](https://github.com/SOR-OTA-Team/sor_ota_ce)
+- [SOR Aktualizr Repository](https://github.com/SOR-OTA-Team/sor_aktualizr)
+- [Uptane Standard](https://uptane.github.io/)
+- [aktualizr 공식 문서](https://github.com/uptane/aktualizr)
