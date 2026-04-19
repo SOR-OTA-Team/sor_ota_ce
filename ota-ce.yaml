@@ -6,18 +6,13 @@
 
 services:
   reverse-proxy:
-    # The official v2 Traefik docker image
-    image: jusy4901/ota-ce-proxy:latest
-    # Enables the web UI and tells Traefik to listen to docker
-    command: --api.insecure=true --providers.docker --providers.docker.exposedbydefault=false
+    image: traefik:v2.10
     ports:
-      # The HTTP port
       - "80:80"
-      # The Web UI (enabled by --api.insecure=true)
       - "8080:8080"
     volumes:
-      # So that Traefik can listen to the Docker events
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro
 
   gateway:
     image: jusy4901/ota-ce-gateway:latest
